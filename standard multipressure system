@@ -1,0 +1,118 @@
+clear; clc; clf;
+
+addpath('C:\Program Files (x86)\REFPROP\') %Designate your file directory
+
+which refpropm
+
+data_perf = fopen("data_COP_normal.csv","a");
+
+%Set input parameters
+refrigerant = 'r1234yf';
+T_e = 273.15 -40; %Evaporator Temperature in K
+T_k = 273.15 +30; %Condenser Temperature in K
+T0 = 273.15 + 25; %Dead state Temp
+P_e = refpropm('P', 'T', T_e, 'Q', 1, refrigerant); % Pressure at evaporator (in kPa)
+P_k = refpropm('P', 'T', T_k, 'Q', 0, refrigerant); % Pressure at condenser (in kPa)
+P0 = 101.25; %Dead state P
+n_c = 0.874-0.0135*(P_k/P_e); %Compressor Efficiency
+P_int = sqrt(P_e*P_k); %intermediate pressure
+m_5 = 1;
+
+h0 = refpropm('H', 'T', T0, 'P', P0, refrigerant); %Dead state enthalpy
+s0 = refpropm('S', 'T', T0, 'P', P0, refrigerant); %Dead state entropy
+
+h_1 = refpropm('H', 'T', T_e, 'Q', 1, refrigerant); %Outlet Enthalpy of Evaporator
+s_1 = refpropm('S', 'T', T_e, 'Q', 1, refrigerant); %Outlet Entropy of Evaporator
+h_5 = refpropm('H', 'T', T_k, 'Q', 0, refrigerant); %Outlet Enthalpy of Condenser
+s_5 = refpropm('S', 'T', T_k, 'Q', 0, refrigerant); %Outlet Entropy of Condenser
+
+%Constant pressure flash tank
+P_6 = P_int;
+h_6 = h_5; %expansion valve 1
+
+P_7 = P_int; %Constant pressure flash tank
+h_7 = refpropm('H', 'P', P_7, 'Q', 0, refrigerant); 
+h_8 = h_7;
+
+%Compressor 2
+P_1 = P_e;
+%h_1 and s_1 given
+P_2 = P_int; %Constant pressure flash tank
+s_2s = s_1;
+h_2s = refpropm('H', 'P', P_2, 'S', s_2s, refrigerant);
+h_2 = h_1 + (h_2s-h_1)/n_c;
+
+P_3 = P_int;
+h_3 = refpropm('H', 'P', P_3, 'Q', 1, refrigerant); 
+s_3 = refpropm('S', 'P', P_3, 'Q', 1, refrigerant); 
+
+%Compressor 1
+P_4 = P_k; 
+s_4s = s_3;
+h_4s = refpropm('H', 'P', P_4, 'S', s_4s, refrigerant);
+h_4 = h_3 + (h_4s-h_3)/n_c;
+s_4 = refpropm('S', 'P', P_4, 'H', h_4, refrigerant);
+
+%Other state points
+s_2 = refpropm('S','P', P_2, 'H', h_2, refrigerant);
+s_6 = refpropm('S','P', P_6, 'H', h_6, refrigerant);
+s_7 = refpropm('S','P', P_7, 'H', h_7, refrigerant);
+P_8 = P_1; %constant pressure evaporator inlet and outlet
+s_8 = refpropm('S','P', P_8, 'H', h_8, refrigerant);
+
+m_3 = m_5;
+m_4 = m_5;
+m_6 = m_5;
+
+m_2 = (m_3*(h_3-h_6))/(h_2-h_7);
+m_8 = m_2;
+m_1 = m_2;
+m_7 = m_2;
+
+Q_k = m_5*(h_4 - h_5);
+Q_e = m_1*(h_1 - h_8);
+
+WC1 = m_4*(h_4-h_3);
+WC2 = m_2*(h_2-h_1);
+W_tot = WC1+WC2;
+
+% Exergy analysis deadstate
+e_1 = (h_1 - h0) - T0*(s_1 - s0);
+e_2 = (h_2 - h0) - T0*(s_2 - s0);
+e_3 = (h_3 - h0) - T0*(s_3 - s0);
+e_4 = (h_4 - h0) - T0*(s_4 - s0);
+e_5 = (h_5 - h0) - T0*(s_5 - s0);
+e_6 = (h_6 - h0) - T0*(s_6 - s0);
+e_7 = (h_7 - h0) - T0*(s_7 - s0);
+e_8 = (h_8 - h0) - T0*(s_8 - s0);
+
+%Exergy destruction per component
+%%Compressor 2 (Lower Pressure Side)
+Edcomp2 = m_1*(e_1 - e_2) + WC2;
+%%Compressor 1 (High Pressure Side)
+Edcomp1 = m_3*(e_3 - e_4) + WC1;
+%%Condenser
+Edcond = m_4*(e_4 - e_5) - Q_k*(1-(T0/(T_k-15)));
+%%Expansion Valve 1 (Before Intercooler) 
+Edexp1 = m_5*(e_5 - e_6);
+%%Expansion Valve 2 (Before Evap)
+Edexp2 = m_7*(e_7 - e_8);
+%%Evaporator 
+Edevap = m_8*(e_8 - e_1) + Q_e*(1-(T0/(T_e+15)));
+%%Flashtank
+Edflash = (m_2*e_2+m_6*e_6) - (m_3*e_3+m_7*e_7);
+
+%Total Exergy destruction
+TotalEd = Edcomp2 + Edcomp1 + Edcond + Edexp1 + Edexp2 + Edevap + Edflash;
+
+% 3. Total exergy input
+Ex_input = WC1 + WC2;
+
+% 5. Exergy efficiencies
+ex_eff_refrig = Edevap / Ex_input;
+ex_eff_heatpump = Edcond/ Ex_input;
+ex_eff_combined = (Edevap + Edcond) / Ex_input;
+
+COPcooling = (Q_e)/(WC1 + WC2);
+COPheating = (Q_k)/(WC1 + WC2);
+COPcombine = (Q_e+Q_k)/(WC1 + WC2);
