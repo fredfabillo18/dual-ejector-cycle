@@ -1,0 +1,331 @@
+clear; clc; clf;
+
+addpath('C:\Program Files (x86)\REFPROP\') %Designate your file directory
+
+which refpropm
+
+data_perf = fopen("data_performance.csv","a");
+% data_Exergy = fopen("data_Exergy.txt","w");
+
+%Set input parameters
+refrigerant = 'R1234yf';
+T_e = 273.15 -40; %Evaporator Temperature in K
+T_k = 273.15 +30; %Condenser Temperature in K
+T0 = 273.15 + 25; %Dead state Temp
+P_e = refpropm('P', 'T', T_e, 'Q', 1, refrigerant); % Pressure at evaporator (in kPa)
+P_k = refpropm('P', 'T', T_k, 'Q', 0, refrigerant); % Pressure at condenser (in kPa)
+P0 = 101.25; %Dead state P
+n_c = 0.874-0.0135*(P_k/P_e); %Compressor Efficiency
+n_noz = 0.85; %Ejector Nozzle Efficiency
+n_suc = 0.85; %Ejector Suction Chamber Efficiency
+n_mix = 0.95; %Ejector Mixing Section Efficiency
+n_dif = 0.85; %Ejector Diffuser Efficiency
+m_1 = 1;
+
+% Optimum parameters
+dp1 = 10; %suction pressure difference for ej1 (kPa)
+dp2 = 5; %suction pressure difference for ej2 (kPa)
+P_int = 302.53; %Optimum Intermediate P
+
+%Solution Proper
+
+h0 = refpropm('H', 'T', T0, 'P', P0, refrigerant); %Dead state enthalpy
+s0 = refpropm('S', 'T', T0, 'P', P0, refrigerant); %Dead state entropy
+
+h_13 = refpropm('H', 'T', T_e, 'Q', 1, refrigerant); %Outlet Enthalpy of Evaporator
+s_13 = refpropm('S', 'T', T_e, 'Q', 1, refrigerant); %Outlet Entropy of Evaporator
+h_3 = refpropm('H', 'T', T_k, 'Q', 0, refrigerant); %Outlet Enthalpy of Condenser
+s_3 = refpropm('S', 'T', T_k, 'Q', 0, refrigerant); %Outlet Entropy of Condenser
+
+
+disp(['Evaporator temp: ',num2str(T_e-273.15)]);
+disp(['Evaporator temp: ',num2str(T_k-273.15)]);
+disp(['Pressure drop at ejector 1: ',num2str(dp1)]);
+disp(['Pressure drop at ejector 2: ',num2str(dp2)]);
+
+P_10 = P_e;
+itolerance = 1e-4;
+imax_iterations = 50;
+
+jtolerance = 1e-4;
+jmax_iterations = 50;
+
+ktolerance = 1e-4;
+kmax_iterations = 50;
+
+w1 = 0.1;
+w1_1 = 0.2;
+w2 = 0.1;
+w2_1 = 0.2;
+
+for i = 1:imax_iterations
+    %P_int = sqrt(P_10*P_k);  
+    P_15 = P_10;
+    h_15 = refpropm('H', 'P', P_15, 'Q', 1, refrigerant);
+    s_15 = refpropm('S', 'P', P_15, 'Q', 1, refrigerant);
+    
+    P_16 = P_int;
+    s_16s = s_15;
+    h_16s = refpropm('H', 'P', P_16, 'S', s_16s, refrigerant);
+    h_16 = h_15 + (h_16s-h_15)/n_c;
+        
+    for j = 1:jmax_iterations
+        %Ejector 1
+        % @Nozzle 
+        %h_3 & s_3 are given above
+        P_4 = P_16 - dp1;
+        s_4s = s_3; %isentropic process nozzle
+        h_4s = refpropm('H','P', P_4, 'S', s_4s, refrigerant);%ideal enthalpy at nozzle outlet 
+        h_4 = h_3 - n_noz*(h_3-h_4s); %actual enthalpy at nozzle outlet
+        V_4 = sqrt(2*(h_3-h_4)); %velocity at nozzle outlet 
+    
+        % @Suction
+        s_16 = refpropm('S', 'P', P_16, 'H', h_16, refrigerant);
+        P_17 = P_16 - dp1;
+        s_17s = s_16;
+        h_17s = refpropm('H', 'P', P_17, 'S', s_17s, refrigerant);%Actual enthalpy at suction outlet 
+        h_17 = h_16 - n_suc*(h_16-h_17s); %actual enthalpy at suction 
+        disp(num2str(h_16-h_17s));
+        V_17 = sqrt(2*(h_16-h_17)); %velocity at suction outlet 
+           
+        %% @Mixing (w1)
+        P_5 = P_17; %constant pressure mixing chamber
+        V_5 = sqrt(n_mix)*((1/(1+w1))*V_4 + (w1/(1+w1))*V_17); %velocity in the mixing chamber       
+        h_5 = (1/(1+w1))*(h_4+V_4^2/2) + (w1/(1+w1))*(h_17+V_17^2/2) - (V_5^2/2); %enthalpy of the mixing chamber 
+        s_5 = refpropm('S','P', P_5, 'H', h_5, refrigerant); %entropy of the mixing chamber
+        
+        %% @Diffuser (w1)
+        h_6 = h_5 +(V_5^2/2); %actual enthalpy at diffuser outlet
+        h_6s = h_5 + n_dif*(h_6-h_5); %ideal enthalpy at diffuser outlet  
+        s_6s = s_5;
+        P_6 = refpropm('P', 'H', h_6s, 'S', s_6s, refrigerant); %pressure at the diffuser outlet 
+    
+        x_6 = refpropm('Q', 'P', P_6, 'H', h_6, refrigerant);
+    
+        % Checker
+        f0 = abs(x_6 - (1/(1+w1)));
+    
+        %% @Mixing (w1_1)
+        P_5 = P_17; %constant pressure mixing chamber
+        V_5 = sqrt(n_mix)*((1/(1+w1_1))*V_4 + (w1_1/(1+w1_1))*V_17); %velocity in the mixing chamber       
+        h_5 = (1/(1+w1_1))*(h_4+V_4^2/2) + (w1_1/(1+w1_1))*(h_17+V_17^2/2) - (V_5^2/2); %enthalpy of the mixing chamber 
+        s_5 = refpropm('S','P', P_5, 'H', h_5, refrigerant); %entropy of the mixing chamber
+        
+        %% @Diffuser (w1)
+        h_6 = h_5 +(V_5^2/2); %actual enthalpy at diffuser outlet
+        h_6s = h_5 + n_dif*(h_6-h_5); %ideal enthalpy at diffuser outlet  
+        s_6s = s_5;
+        P_6 = refpropm('P', 'H', h_6s, 'S', s_6s, refrigerant); %pressure at the diffuser outlet 
+    
+        x_6 = refpropm('Q', 'P', P_6, 'H', h_6, refrigerant);
+       
+        % Checker
+        f1 = abs(x_6 - (1/(1+w1_1)));
+    
+        % Secant Method
+        w1_new = w1_1 - f1*(w1_1-w1)/(f1-f0);
+    
+        fnew = abs(x_6 - (1/(1+w1_new)));
+    
+        if abs(w1_new - w1_1) < jtolerance
+           % fprintf('Converged w1'); 
+           break;
+        end
+        w1 = w1_1;
+        f0 = f1;
+        w1_1 = w1_new;
+        f1 = fnew;
+    
+        % fprintf('Iteration %d: omega 1 = %.6f\n', j, w1_new);
+    end
+    P_7 = P_6;
+    
+    wr1 = w2/w1_new;
+    wr2 = w2_1/w1_new;
+
+    for k = 1:kmax_iterations
+        % @Nozzle 2
+        h_7 = refpropm('H', 'P', P_7, 'Q', 0, refrigerant); %saturated liquid outlet enthalpy of the separator 1
+        s_7 = refpropm('S', 'P', P_7, 'Q', 0, refrigerant); %saturated liquid outlet entropy of the separator 1
+       
+        P_13 = P_e;
+        P_8 = P_13 - dp2; %nozzle outlet pressure
+        s_8s = s_7; %isentropic process nozzle
+        h_8s = refpropm('H','P', P_8, 'S', s_8s, refrigerant); %ideal enthalpy at nozzle outlet 
+        h_8 = h_7 - n_noz*(h_7-h_8s); %actual enthalpy at nozzle outlet
+        V_8 = sqrt(2*(h_7-h_8)); %velocity at nozzle outlet 
+        
+        % @Suction
+        %h_13 & s_13 are given above 
+        P_14 = P_13 - dp2; %suction outlet pressure
+        s_14s = s_13; %isentropic process nozzle
+        h_14s = refpropm('H', 'P', P_14, 'S', s_14s, refrigerant);%Actual enthalpy at suction outlet 
+        h_14 = h_13 - n_suc*(h_13-h_14s); %actual enthalpy at suction 
+        V_14 = sqrt(2*(h_13-h_14)); %velocity at suction outlet 
+            
+        %% @Mixing (wr1)
+        P_9 = P_14; %constant pressure mixing chamber
+        V_9 = sqrt(n_mix)*((1/(1+wr1))*V_8 + (wr1/(1+wr1))*V_14); %velocity in the mixing chamber       
+        h_9 = (1/(1+wr1))*(h_8+V_8^2/2) + (wr1/(1+wr1))*(h_14+V_14^2/2) - (V_9^2/2); %enthalpy of the mixing chamber 
+        s_9 = refpropm('S','P', P_9, 'H', h_9, refrigerant); %entropy of the mixing chamber
+        
+        %% @Diffuser (wr1)
+        h_10 = h_9 +(V_9^2)/2; %actual enthalpy at diffuser outlet
+        h_10s = h_9 + n_dif*(h_10-h_9); %ideal enthalpy at diffuser outlet  
+        s_10s = s_9;
+        
+        P_10prime = refpropm('P', 'H', h_10s, 'S', s_10s, refrigerant); %pressure at the diffuser outlet 
+    
+        x_10 = refpropm('Q', 'P', P_10prime, 'H', h_10, refrigerant); %quality at the diffuser outlet
+    
+        % Checker
+        f0 = abs(x_10 - (1/(1+wr1)));
+    
+        %% @Mixing (wr2)
+        P_9 = P_14; %constant pressure mixing chamber
+        V_9 = sqrt(n_mix)*((1/(1+wr2))*V_8 + (wr2/(1+wr2))*V_14); %velocity in the mixing chamber       
+        h_9 = (1/(1+wr2))*(h_8+V_8^2/2) + (wr2/(1+wr2))*(h_14+V_14^2/2) - (V_9^2/2); %enthalpy of the mixing chamber 
+        s_9 = refpropm('S','P', P_9, 'H', h_9, refrigerant); %entropy of the mixing chamber
+        
+        %% @Diffuser (w2_1)
+        h_10 = h_9 +(V_9^2)/2; %actual enthalpy at diffuser outlet
+        h_10s = h_9 + n_dif*(h_10-h_9); %ideal enthalpy at diffuser outlet  
+        s_10s = s_9;
+        P_10prime = refpropm('P', 'H', h_10s, 'S', s_10s, refrigerant); %pressure at the diffuser outlet 
+    
+        x_10 = refpropm('Q', 'P', P_10prime, 'H', h_10, refrigerant); %quality at the diffuser outlet
+      
+        % Checker
+        f1 = abs(x_10 - (1/(1+wr2)));
+    
+        % Secant Method
+        wr_new = wr2 - f1*(wr2-wr1)/(f1-f0);
+    
+        fnew = abs(x_10 - (1/(1+wr_new)));
+    
+        if abs(wr_new - wr2) < ktolerance 
+           % fprintf('Converged wr'); 
+           break;
+        end
+        wr1 = wr2;
+        f0 = f1;
+        wr2 = wr_new;
+        f1 = fnew;
+    
+        % fprintf('Iteration %d: omega wr1 = %.6f\n', k, wr_new);
+    end
+
+    w2_new = wr_new*w1_new;
+
+    if abs(P_10 - P_10prime) < itolerance 
+        % fprintf('Converged P10'); 
+        break;
+    end
+    P_10 = P_10prime;
+    % fprintf('Iteration %d: P10 = %.6f\n', i, P_10);
+    % fprintf('Iteration %d: P10 prime = %.6f\n', i, P_10prime);
+end
+%Mass Balance in Ejector 1
+m_4 = m_1;
+m_3 = m_1;
+m_2 = m_1;
+m_17 = m_4*w1_new;
+m_16 = m_17;
+m_5 = m_4 + m_17;
+m_6 = m_5;
+m_7 = m_6 - m_1;
+
+%Compressor 1 Enthalpy
+P_1 = P_6;
+h_1 = refpropm('H','P', P_1, 'Q', 1, refrigerant);
+s_1 = refpropm('S','P', P_1, 'Q', 1, refrigerant);
+
+P_2 = P_k;
+s_2s = s_1;
+h_2s = refpropm('H','P', P_2, 'S', s_2s, refrigerant);
+h_2 = h_1 + (h_2s-h_1)/n_c;
+s_2 = refpropm('S','P', P_2, 'H', h_2, refrigerant);
+
+%Mass Balance in Ejector 2
+m_8 = m_7;
+m_15 = m_17;
+m_14 = w2_new;
+m_9 = m_8 + m_14;
+m_10 = m_9;
+m_13 = m_14;
+m_12 = m_14;
+m_11 = m_14;
+
+P_11 = P_10;
+h_11 = refpropm('H', 'P', P_11, 'Q', 0, refrigerant);
+h_12 = h_11;
+
+%Condenser Heat Rate
+Q_k = m_3*(h_2 - h_3);
+
+%Evaporator Refrigerating Capacity
+
+Q_e = m_13*(h_13-h_12);
+
+%Compressor 1 Work
+WC1 = m_1*(h_2-h_1);
+%Compressor 2 Work
+WC2 = m_15*(h_16-h_15);
+
+%Actual entropy values of other states
+s_6 = refpropm('S','P', P_6, 'H', h_6, refrigerant);
+s_10 = refpropm('S','P', P_10, 'H', h_10, refrigerant);
+s_11 = refpropm('S','P', P_11, 'H', h_11, refrigerant);
+P_12 = P_13;
+s_12 = refpropm('S','P', P_12, 'H', h_12, refrigerant);
+
+%Exergy calculations
+e1 = (h_1 - h0) - T0 * (s_1 - s0);
+e2 = (h_2 - h0) - T0 * (s_2 - s0);
+e3 = (h_3 - h0) - T0 * (s_3 - s0);
+e6 = (h_6 - h0) - T0 * (s_6 - s0);
+e7 = (h_7 - h0) - T0 * (s_7 - s0);
+e10 = (h_10 - h0) - T0 * (s_10 - s0);
+e11 = (h_11 - h0) - T0 * (s_11 - s0);
+e12 = (h_12 - h0) - T0 * (s_12 - s0);
+e13 = (h_13 - h0) - T0 * (s_13 - s0);
+e15 = (h_15 - h0) - T0 * (s_15 - s0);
+e16 = (h_16 - h0) - T0 * (s_16 - s0);
+
+% Exergy equations from Paper
+%%Compressor 1
+E_dc1 = m_1*(e1 - e2) + WC1;
+%%Compressor 2
+E_dc2 = m_15*(e15 - e16) + WC2;
+%%Condenser 
+E_dk = m_2*(e2 - e3) - Q_k*(1-(T0/(T_k-15)));
+%%Evaporator 
+E_de = m_12*(e12 - e13) + Q_e*(1-(T0/(T_e+15)));
+%%Expansion Valve
+E_exp = m_11*(e11 - e12);
+%%Ejector 1
+E_ej1 = m_3*e3 + m_16*e16 - m_6*e6;
+%%Ejector 2
+E_ej2 = m_7*e7 + m_13*e13 - m_10*e10; 
+%%Total Exergy Destruction
+E_tot = E_dc1 + E_dc2 + E_dk + E_de + E_exp + E_ej1 + E_ej2;
+
+W_tot = WC1+WC2; 
+
+%%Exergy Efficiency
+n_ex_cooling = E_de/W_tot; %cooling
+n_ex_heating = E_dk/W_tot; %heating
+
+%COP
+COPcombine = (Q_e+Q_k)/(WC1 + WC2);
+COPcooling = (Q_e)/(WC1 + WC2);
+COPheating = (Q_k)/(WC1 + WC2);
+ 
+h_6prime = (m_1*h_1 + m_7*h_7)/m_6;
+h_10prime = (m_11*h_11 + m_15*h_15)/m_10;
+
+
+% fprintf(data_perf, '%.4f\n%.4f\n%.4f\n%.4f\n%.4f\n%.4f\n%.4f\n%.4f\n%.4f\n%.4f\n%.4f\n%.4f\n%.4f\n\n\n', w1_new, w2_new, Q_e/1000, Q_k/1000, WC1/1000, WC2/1000, W_tot/1000, COPcooling, COPheating, COPcombine, E_tot/1000, n_ex_cooling, n_ex_heating); % prints to csv
+% fprintf(data_perf, '%s,Te = %.4f,Tk = %.4f,%.4f,%.4f\n', refrigerant, T_e-273.15, T_k-273.15, n_ex_cooling, n_ex_heating); % prints to csv
+% fprintf(data_Exergy, '%.4f,%.4f\n', E_de, n_ex);
+% fprintf(data_perf, 'Compressor 1:,%.4f\nCompressor 2:,%.4f\nCondenser:,%.4f\nEvaporator:,%.4f\nValve:,%.4f\nEjector 1:,%.4f\nEjector 2:,%.4f\nTotal:,%.4f\n\n', E_dc1, E_dc2, E_dk, E_de, E_exp, E_ej1, E_ej2, E_tot);
